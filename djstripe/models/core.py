@@ -936,7 +936,7 @@ class Customer(StripeModel):
         self.sync_from_stripe_data(stripe_customer)
         self.refresh_from_db()
 
-        return payment_method
+        return True
 
     def add_payment_method(self, payment_method, set_default=True):
         """
@@ -954,7 +954,7 @@ class Customer(StripeModel):
         payment_method = PaymentMethod.attach(payment_method, stripe_customer)
 
         if set_default:
-            stripe_customer.set_default_payment_method(payment_method)
+            self.set_default_payment_method(payment_method)
 
         return payment_method
 
