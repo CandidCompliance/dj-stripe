@@ -939,6 +939,35 @@ class Customer(StripeModel):
 
         return payment_method
 
+    def set_default_payment_method(self, payment_method):
+        """
+        Sets an already existing payment method as this customers default payment method
+        :param payment_method: PaymentMethod to be set as the default
+        :type payment_method: str, PaymentMethod
+        :param set_default: If true, this will be set as the default_payment_method
+        :type set_default: bool
+        :rtype: PaymentMethod
+        """
+        stripe_customer = self.api_retrieve()
+
+        if isinstance(payment_method, StripeModel):
+            payment_method = payment_method.id
+
+        stripe_customer["invoice_settings"][
+            "default_payment_method"
+        ] = payment_method.id
+            
+        stripe_customer.save()
+
+        # Refresh self from the stripe customer, this should have two effects:
+        # 1) sets self.default_payment_method (we rely on logic in
+        # Customer._manipulate_stripe_object_hook to do this)
+        # 2) updates self.invoice_settings.default_payment_methods
+        self.sync_from_stripe_data(stripe_customer)
+        self.refresh_from_db()
+
+        return payment_method
+
     def purge(self):
         try:
             self._api_delete()
