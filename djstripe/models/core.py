@@ -954,7 +954,7 @@ class Customer(StripeModel):
         payment_method = PaymentMethod.attach(payment_method, stripe_customer)
 
         if set_default:
-            stripe.set_default_payment_method(payment_method)
+            stripe_customer.set_default_payment_method(payment_method)
 
         return payment_method
 
