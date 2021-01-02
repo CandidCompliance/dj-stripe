@@ -3,6 +3,7 @@ dj-stripe Custom Field Definitions
 """
 import decimal
 
+from django.conf import SettingsReference, settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
@@ -10,9 +11,38 @@ from .settings import USE_NATIVE_JSONFIELD
 from .utils import convert_tstamp
 
 if USE_NATIVE_JSONFIELD:
-    from django.contrib.postgres.fields import JSONField as BaseJSONField
+    try:
+        # Django 3.1
+        from django.db.models import JSONField as BaseJSONField
+    except ImportError:
+        from django.contrib.postgres.fields import JSONField as BaseJSONField
 else:
     from jsonfield import JSONField as BaseJSONField
+
+
+class StripeForeignKey(models.ForeignKey):
+    setting_name = "DJSTRIPE_FOREIGN_KEY_TO_FIELD"
+
+    def __init__(self, *args, **kwargs):
+        # The default value will only come into play if the check for
+        # that setting has been disabled.
+        kwargs["to_field"] = getattr(settings, self.setting_name, "id")
+        super().__init__(*args, **kwargs)
+
+    def deconstruct(self):
+        name, path, args, kwargs = super().deconstruct()
+        kwargs["to_field"] = SettingsReference(
+            getattr(settings, self.setting_name, "id"), self.setting_name
+        )
+        return name, path, args, kwargs
+
+    def get_default(self):
+        # Override to bypass a weird bug in Django
+        # https://stackoverflow.com/a/14390402/227443
+        if isinstance(self.remote_field.model, str):
+            return self._get_default()
+        else:
+            return super().get_default()
 
 
 class PaymentMethodForeignKey(models.ForeignKey):
@@ -80,6 +110,10 @@ class StripeDecimalCurrencyAmountField(models.DecimalField):
         """Convert the raw value to decimal representation."""
         val = data.get(self.name)
 
+        # If already a string, it's decimal in the API (eg. Prices).
+        if isinstance(val, str):
+            return decimal.Decimal(val)
+
         # Note: 0 is a possible return value, which is 'falseish'
         if val is not None:
             return val / decimal.Decimal("100")
@@ -96,7 +130,8 @@ class StripeEnumField(models.CharField):
     def deconstruct(self):
         name, path, args, kwargs = super().deconstruct()
         kwargs["enum"] = self.enum
-        del kwargs["choices"]
+        if "choices" in kwargs:
+            del kwargs["choices"]
         return name, path, args, kwargs
 
 

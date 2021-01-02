@@ -48,6 +48,16 @@ class Enum(metaclass=EnumMetaClass):
     pass
 
 
+class APIKeyType(Enum):
+    """
+    API Key Types (internal model only)
+    """
+
+    publishable = _("Publishable key")
+    secret = _("Secret key")
+    restricted = _("Restricted key")
+
+
 class ApiErrorCode(Enum):
     """
     Charge failure error codes.
@@ -154,21 +164,62 @@ class AccountType(Enum):
     custom = _("Custom")
 
 
+class BalanceTransactionReportingCategory(Enum):
+    """
+    https://stripe.com/docs/reports/reporting-categories
+    """
+
+    advance = _("Advance")
+    advance_funding = _("Advance funding")
+    anticipation_repayment = _("Anticipation loan repayment (BR)")
+    charge = _("Charge")
+    charge_failure = _("Charge failure")
+    connect_collection_transfer = _("Stripe Connect collection transfer")
+    connect_reserved_funds = _("Stripe Connect reserved funds")
+    dispute = _("Dispute")
+    dispute_reversal = _("Dispute reversal")
+    fee = _("Stripe fee")
+    issuing_authorization_hold = _("Issuing authorization hold")
+    issuing_authorization_release = _("Issuing authorization release")
+    issuing_dispute = _("Issuing dispute")
+    issuing_transaction = _("Issuing transaction")
+    other_adjustment = _("Other adjustment")
+    partial_capture_reversal = _("Partial capture reversal")
+    payout = _("Payout")
+    payout_reversal = _("Payout reversal")
+    platform_earning = _("Stripe Connect platform earning")
+    platform_earning_refund = _("Stripe Connect platform earning refund")
+    refund = _("Refund")
+    refund_failure = _("Refund failure")
+    risk_reserved_funds = _("Risk-reserved funds")
+    tax = _("Tax")
+    topup = _("Top-up")
+    topup_reversal = _("Top-up reversal")
+    transfer = _("Stripe Connect transfer")
+    transfer_reversal = _("Stripe Connect transfer reversal")
+
+
 class BalanceTransactionStatus(Enum):
     available = _("Available")
     pending = _("Pending")
 
 
 class BalanceTransactionType(Enum):
+    # https://stripe.com/docs/reports/balance-transaction-types
     adjustment = _("Adjustment")
     advance = _("Advance")
     advance_funding = _("Advance funding")
+    anticipation_repayment = _("Anticipation loan repayment")
     application_fee = _("Application fee")
     application_fee_refund = _("Application fee refund")
+    balance_transfer_inbound = _("Balance transfer (inbound)")
+    balance_transfer_outbound = _("Balance transfer (outbound)")
     charge = _("Charge")
     connect_collection_transfer = _("Connect collection transfer")
+    contribution = _("Charitable contribution")
     issuing_authorization_hold = _("Issuing authorization hold")
     issuing_authorization_release = _("Issuing authorization release")
+    issuing_dispute = _("Issuing dispute")
     issuing_transaction = _("Issuing transaction")
     network_cost = _("Network cost")
     payment = _("Payment")
@@ -182,12 +233,13 @@ class BalanceTransactionType(Enum):
     reserve_transaction = _("Reserve transaction")
     reserved_funds = _("Reserved funds")
     stripe_fee = _("Stripe fee")
-    stripe_fx_fee = _("Stripe fx fee")
+    stripe_fx_fee = _("Stripe currency conversion fee")
     tax_fee = _("Tax fee")
     topup = _("Topup")
     topup_reversal = _("Topup reversal")
     transfer = _("Transfer")
     transfer_cancel = _("Transfer cancel")
+    transfer_failure = _("Transfer failure")
     transfer_refund = _("Transfer refund")
     validation = _("Validation")
 
@@ -203,6 +255,11 @@ class BankAccountStatus(Enum):
     verified = _("Verified")
     verification_failed = _("Verification failed")
     errored = _("Errored")
+
+
+class BillingScheme(Enum):
+    per_unit = _("Per-unit")
+    tiered = _("Tiered")
 
 
 class BusinessType(Enum):
@@ -296,9 +353,18 @@ class DisputeStatus(Enum):
 
 
 class FileUploadPurpose(Enum):
+    additional_verification = _("Additional verification")
+    business_icon = _("Business icon")
+    business_logo = _("Business logo")
+    customer_signature = _("Customer signature")
     dispute_evidence = _("Dispute evidence")
+    finance_report_run = _("Finance report run")
     identity_document = _("Identity document")
+    invoice_statement = _("Invoice statement")
+    pci_document = _("PCI document")
+    sigma_scheduled_query = _("Sigma scheduled query")
     tax_document_user_upload = _("Tax document user upload")
+    document_provider_identity_document = _("Document provider identity document")
 
 
 class FileUploadType(Enum):
@@ -390,6 +456,24 @@ class SetupIntentStatus(Enum):
     )
 
 
+class PaymentMethodType(Enum):
+    alipay = _("Alipay")
+    au_becs_debit = _("BECS Debit (Australia)")
+    bacs_debit = _("Bacs Direct Debit")
+    bancontact = _("Bancontact")
+    card = _("Card")
+    card_present = _("Card present")
+    eps = _("EPS")
+    fpx = _("FPX")
+    giropay = _("Giropay")
+    ideal = _("iDEAL")
+    interac_present = _("Interac (card present)")
+    oxxo = _("OXXO")
+    p24 = _("Przelewy24")
+    sepa_debit = _("SEPA Direct Debit")
+    sofort = _("SOFORT")
+
+
 class PayoutFailureCode(Enum):
     """
     Payout failure error codes.
@@ -413,6 +497,12 @@ class PayoutFailureCode(Enum):
 class PayoutMethod(Enum):
     standard = _("Standard")
     instant = _("Instant")
+
+
+class PayoutSourceType(Enum):
+    bank_account = _("Bank account")
+    fpx = _("Financial Process Exchange (FPX)")
+    card = _("Card")
 
 
 class PayoutStatus(Enum):
@@ -448,11 +538,6 @@ class PlanAggregateUsage(Enum):
     sum = _("Sum")
 
 
-class PlanBillingScheme(Enum):
-    per_unit = _("Per unit")
-    tiered = _("Tiered")
-
-
 class PlanInterval(Enum):
     day = _("Day")
     week = _("Week")
@@ -460,14 +545,24 @@ class PlanInterval(Enum):
     year = _("Year")
 
 
-class PlanUsageType(Enum):
+class PriceTiersMode(Enum):
+    graduated = _("Graduated")
+    volume = _("Volume-based")
+
+
+class PriceType(Enum):
+    one_time = _("One-time")
+    recurring = _("Recurring")
+
+
+class PriceUsageType(Enum):
     metered = _("Metered")
     licensed = _("Licensed")
 
 
-class PlanTiersMode(Enum):
-    graduated = _("Graduated")
-    volume = _("Volume-based")
+# Legacy
+PlanTiersMode = PriceTiersMode
+PlanUsageType = PriceUsageType
 
 
 class ProductType(Enum):
@@ -506,20 +601,25 @@ class SourceStatus(Enum):
 class SourceType(Enum):
     ach_credit_transfer = _("ACH Credit Transfer")
     ach_debit = _("ACH Debit")
+    acss_debit = _("ACSS Debit")
     alipay = _("Alipay")
+    au_becs_debit = _("BECS Debit (AU)")
     bancontact = _("Bancontact")
-    bitcoin = _("Bitcoin")
+    bitcoin = _("Bitcoin (Legacy)")
     card = _("Card")
     card_present = _("Card present")
     eps = _("EPS")
     giropay = _("Giropay")
     ideal = _("iDEAL")
+    klarna = _("Klarna")
+    multibanco = _("Multibanco")
     p24 = _("P24")
     paper_check = _("Paper check")
-    sepa_debit = _("SEPA Direct Debit")
     sepa_credit_transfer = _("SEPA credit transfer")
+    sepa_debit = _("SEPA Direct Debit")
     sofort = _("SOFORT")
     three_d_secure = _("3D Secure")
+    wechat = _("WeChat")
 
 
 class LegacySourceType(Enum):
@@ -591,6 +691,19 @@ class SubmitTypeStatus(Enum):
     pay = _("pay")
 
 
+class SubscriptionScheduleEndBehavior(Enum):
+    release = _("Release")
+    cancel = _("Cancel")
+
+
+class SubscriptionScheduleStatus(Enum):
+    not_started = _("Not started")
+    active = _("Active")
+    completed = _("Completed")
+    released = _("Released")
+    canceled = _("Canceled")
+
+
 class SubscriptionStatus(Enum):
     incomplete = _("Incomplete")
     incomplete_expired = _("Incomplete Expired")
@@ -601,11 +714,48 @@ class SubscriptionStatus(Enum):
     unpaid = _("Unpaid")
 
 
+class TaxIdType(Enum):
+    ae_trn = _("AE TRN")
+    au_abn = _("AU ABN")
+    br_cnp = _("BR CNP")
+    br_cpf = _("BR CPF")
+    ca_bn = _("CA BN")
+    ca_qst = _("CA QST")
+    ch_vat = _("CH VAT")
+    cl_tin = _("CL TIN")
+    es_cif = _("ES CIF")
+    eu_vat = _("EU VAT")
+    hk_br = _("HK BR")
+    id_npw = _("ID NPW")
+    in_gst = _("IN GST")
+    jp_cn = _("JP CN")
+    jp_rn = _("JP RN")
+    kr_brn = _("KR BRN")
+    li_uid = _("LI UID")
+    mx_rfc = _("MX RFC")
+    my_frp = _("MY FRP")
+    my_itn = _("MY ITN")
+    my_sst = _("MY SST")
+    no_vat = _("NO VAT")
+    nz_gst = _("NZ GST")
+    ru_inn = _("RU INN")
+    ru_kpp = _("RU KPP")
+    sa_vat = _("SA VAT")
+    sg_gst = _("SG GST")
+    sg_uen = _("SG UEN")
+    th_vat = _("TH VAT")
+    tw_vat = _("TW VAT")
+    us_ein = _("US EIN")
+    za_vat = _("ZA VAT")
+    unknown = _("Unknown")
+
+
 class DjstripePaymentMethodType(Enum):
     """
     A djstripe-specific enum for the DjStripePaymentMethod model.
     """
 
+    alipay_account = _("Alipay account")
     card = _("Card")
     bank_account = _("Bank account")
     source = _("Source")

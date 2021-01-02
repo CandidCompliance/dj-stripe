@@ -41,27 +41,38 @@ class Command(BaseCommand):
         for model in model_list:
             self.sync_model(model)
 
+    def _should_sync_model(self, model):
+        if not issubclass(model, models.StripeModel):
+            return False, "not a StripeModel"
+
+        if model.stripe_class is None:
+            return False, "no stripe_class"
+
+        if not hasattr(model.stripe_class, "list"):
+            return False, "no stripe_class.list"
+
+        if model is models.UpcomingInvoice:
+            return False, "Upcoming Invoices are virtual only"
+
+        if not settings.STRIPE_LIVE_MODE:
+            if model is models.ScheduledQueryRun:
+                return False, "only available in live mode"
+
+        return True, ""
+
     def sync_model(self, model):
         model_name = model.__name__
 
-        if not issubclass(model, models.StripeModel):
-            print("Skipping {} (not a StripeModel)".format(model_name))
+        should_sync, reason = self._should_sync_model(model)
+        if not should_sync:
+            self.stdout.write(f"Skipping {model}: {reason}")
             return
 
-        if model.stripe_class is None:
-            print("Skipping {} (no stripe_class)".format(model_name))
-            return
+        self.stdout.write("Syncing {}:".format(model_name))
 
-        if not hasattr(model.stripe_class, "list"):
-            print("Skipping {} (no stripe_class.list)".format(model_name))
-            return
-
-        print("Syncing {}:".format(model_name))
-
-        try:
-            count = 0
-
-            for list_kwargs in self.get_list_kwargs(model):
+        count = 0
+        for list_kwargs in self.get_list_kwargs(model):
+            try:
                 if model is models.Account:
                     # special case, since own account isn't returned by Account.api_list
                     stripe_obj = models.Account.stripe_class.retrieve(
@@ -69,7 +80,7 @@ class Command(BaseCommand):
                     )
                     count += 1
                     djstripe_obj = model.sync_from_stripe_data(stripe_obj)
-                    print(
+                    self.stdout.write(
                         "  id={id}, pk={pk} ({djstripe_obj})".format(
                             id=djstripe_obj.id,
                             pk=djstripe_obj.pk,
@@ -80,7 +91,7 @@ class Command(BaseCommand):
                 for stripe_obj in model.api_list(**list_kwargs):
                     count += 1
                     djstripe_obj = model.sync_from_stripe_data(stripe_obj)
-                    print(
+                    self.stdout.write(
                         "  id={id}, pk={pk} ({djstripe_obj})".format(
                             id=djstripe_obj.id,
                             pk=djstripe_obj.pk,
@@ -88,17 +99,17 @@ class Command(BaseCommand):
                         )
                     )
 
-            if count == 0:
-                print("  (no results)")
-            else:
-                print(
-                    "  Synced {count} {model_name}".format(
-                        count=count, model_name=model_name
-                    )
-                )
+            except Exception as e:
+                self.stderr.write(str(e))
 
-        except Exception as e:
-            print(e)
+        if count == 0:
+            self.stdout.write("  (no results)")
+        else:
+            self.stdout.write(
+                "  Synced {count} {model_name}".format(
+                    count=count, model_name=model_name
+                )
+            )
 
     def get_list_kwargs(self, model):
         """
@@ -109,14 +120,25 @@ class Command(BaseCommand):
         :param model:
         :return: Sequence[dict]
         """
+        all_list_kwargs = (
+            [{"expand": [f"data.{k}" for k in model.expand_fields]}]
+            if model.expand_fields
+            else []
+        )
         if model is models.PaymentMethod:
             # special case
-            all_list_kwargs = (
-                {"customer": stripe_customer.id, "type": "card"}
-                for stripe_customer in models.Customer.api_list()
+            all_list_kwargs.extend(
+                (
+                    {"customer": stripe_customer.id, "type": "card"}
+                    for stripe_customer in models.Customer.api_list()
+                )
             )
-        else:
-            # one empty dict so we iterate once
-            all_list_kwargs = [{}]
+        elif model is models.SubscriptionItem:
+            all_list_kwargs.extend(
+                (
+                    {"subscription": subscription.id}
+                    for subscription in models.Subscription.api_list()
+                )
+            )
 
         return all_list_kwargs

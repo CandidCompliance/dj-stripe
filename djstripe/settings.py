@@ -9,7 +9,7 @@ from django.utils.module_loading import import_string
 
 from .checks import validate_stripe_api_version
 
-DEFAULT_STRIPE_API_VERSION = "2019-09-09"
+DEFAULT_STRIPE_API_VERSION = "2020-08-27"
 
 
 def get_callback_function(setting_name, default=None):
@@ -130,6 +130,10 @@ def get_default_api_key(livemode):
 
 
 SUBSCRIPTION_REDIRECT = getattr(settings, "DJSTRIPE_SUBSCRIPTION_REDIRECT", "")
+
+SUBSCRIPTION_REQUIRED_EXCEPTION_URLS = getattr(
+    settings, "DJSTRIPE_SUBSCRIPTION_REQUIRED_EXCEPTION_URLS", ()
+)
 
 
 ZERO_DECIMAL_CURRENCIES = set(

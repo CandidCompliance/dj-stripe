@@ -1,14 +1,18 @@
 import logging
 import uuid
 from datetime import timedelta
+from typing import List, Optional
 
+import stripe
 from django.apps import apps
 from django.db import IntegrityError, models, transaction
 from django.utils import dateformat, timezone
 from django.utils.encoding import smart_str
+from stripe.api_resources.abstract.api_resource import APIResource
+from stripe.error import InvalidRequestError
 
 from .. import settings as djstripe_settings
-from ..fields import JSONField, StripeDateTimeField, StripeIdField
+from ..fields import JSONField, StripeDateTimeField, StripeForeignKey, StripeIdField
 from ..managers import StripeModelManager
 
 logger = logging.getLogger(__name__)
@@ -17,8 +21,8 @@ logger = logging.getLogger(__name__)
 class StripeModel(models.Model):
     # This must be defined in descendants of this model/mixin
     # e.g. Event, Charge, Customer, etc.
-    stripe_class = None
-    expand_fields = []
+    stripe_class: Optional[APIResource] = None
+    expand_fields: List[str] = []
     stripe_dashboard_item_name = ""
 
     objects = models.Manager()
@@ -27,11 +31,20 @@ class StripeModel(models.Model):
     djstripe_id = models.BigAutoField(
         verbose_name="ID", serialize=False, primary_key=True
     )
-
     id = StripeIdField(unique=True)
-    livemode = models.NullBooleanField(
-        default=None,
+
+    djstripe_owner_account: Optional[StripeForeignKey] = StripeForeignKey(
+        "djstripe.Account",
+        on_delete=models.CASCADE,
+        to_field="id",
         null=True,
+        blank=True,
+        help_text="The Stripe Account this object belongs to.",
+    )
+
+    livemode = models.BooleanField(
+        null=True,
+        default=None,
         blank=True,
         help_text="Null here indicates that the livemode status is unknown or was "
         "previously unrecorded. Otherwise, this field indicates whether this record "
@@ -61,11 +74,16 @@ class StripeModel(models.Model):
         get_latest_by = "created"
 
     def _get_base_stripe_dashboard_url(self):
-        return "https://dashboard.stripe.com/{}".format(
-            "test/" if not self.livemode else ""
+        owner_path_prefix = (
+            (self.djstripe_owner_account.id + "/")
+            if self.djstripe_owner_account
+            else ""
+        )
+        return "https://dashboard.stripe.com/{}{}".format(
+            owner_path_prefix, "test/" if not self.livemode else ""
         )
 
-    def get_stripe_dashboard_url(self):
+    def get_stripe_dashboard_url(self) -> str:
         """Get the stripe dashboard url for this object."""
         if not self.stripe_dashboard_item_name or not self.id:
             return ""
@@ -77,8 +95,56 @@ class StripeModel(models.Model):
             )
 
     @property
-    def default_api_key(self):
+    def default_api_key(self) -> str:
+        # If the class is abstract (StripeModel), fall back to default key.
+        if not self._meta.abstract:
+            if self.djstripe_owner_account:
+                return self.djstripe_owner_account.get_default_api_key()
         return djstripe_settings.get_default_api_key(self.livemode)
+
+    def _get_stripe_account_id(self, api_key=None) -> Optional[str]:
+        """
+        Call the stripe API's retrieve operation for this model.
+
+        :param api_key: The api key to use for this request. \
+            Defaults to settings.STRIPE_SECRET_KEY.
+        :type api_key: string
+        :param stripe_account: The optional connected account \
+            for which this request is being made.
+        :type stripe_account: string
+        """
+        api_key = api_key or self.default_api_key
+
+        try:
+            djstripe_owner_account = self.djstripe_owner_account
+            if djstripe_owner_account is not None:
+                return djstripe_owner_account.id
+        except (AttributeError, KeyError, ValueError):
+            pass
+
+        # Get reverse foreign key relations to Account in case we need to
+        # retrieve ourselves using that Account ID.
+        reverse_account_relations = (
+            field
+            for field in self._meta.get_fields(include_parents=True)
+            if field.is_relation and field.one_to_many
+            # Avoid circular import problems by using the app registry to
+            # get the model class rather than a direct import.
+            and field.related_model
+            is apps.get_model(app_label="djstripe", model_name="account")
+        )
+
+        # Handle case where we have a reverse relation to Account and should pass
+        # that account ID to the retrieve call.
+        for field in reverse_account_relations:
+            # Grab the related object, using the first one we find.
+            reverse_lookup_attr = field.get_accessor_name()
+            account = getattr(self, reverse_lookup_attr).first()
+
+            if account is not None:
+                return account.id
+
+        return None
 
     def api_retrieve(self, api_key=None, stripe_account=None):
         """
@@ -91,34 +157,13 @@ class StripeModel(models.Model):
             for which this request is being made.
         :type stripe_account: string
         """
-        api_key = api_key or self.default_api_key
         # Prefer passed in stripe_account if set.
         if not stripe_account:
-            # Get reverse foreign key relations to Account in case we need to
-            # retrieve ourselves using that Account ID.
-            reverse_account_relations = (
-                field
-                for field in self._meta.get_fields(include_parents=True)
-                if field.is_relation and field.one_to_many
-                # Avoid circular import problems by using the app registry to
-                # get the model class rather than a direct import.
-                and field.related_model
-                is apps.get_model(app_label="djstripe", model_name="account")
-            )
-
-            # Handle case where we have a reverse relation to Account and should pass
-            # that account ID to the retrieve call.
-            for field in reverse_account_relations:
-                # Grab the related object, using the first one we find.
-                reverse_lookup_attr = field.get_accessor_name()
-                account = getattr(self, reverse_lookup_attr).first()
-                if account is not None:
-                    stripe_account = account.id
-                    break
+            stripe_account = self._get_stripe_account_id(api_key)
 
         return self.stripe_class.retrieve(
             id=self.id,
-            api_key=api_key,
+            api_key=api_key or self.default_api_key,
             expand=self.expand_fields,
             stripe_account=stripe_account,
         )
@@ -163,16 +208,36 @@ class StripeModel(models.Model):
         :type stripe_account: string
         """
         api_key = api_key or self.default_api_key
+        # Prefer passed in stripe_account if set.
+        if not stripe_account:
+            stripe_account = self._get_stripe_account_id(api_key)
 
         return self.api_retrieve(api_key=api_key, stripe_account=stripe_account).delete(
             **kwargs
         )
 
-    def str_parts(self):
+    def _api_update(self, api_key=None, stripe_account=None, **kwargs):
+        """
+        Call the stripe API's modify operation for this model
+
+        :param api_key: The api key to use for this request.
+            Defaults to djstripe_settings.STRIPE_SECRET_KEY.
+        :type api_key: string
+        :param stripe_account: The optional connected account \
+            for which this request is being made.
+        :type stripe_account: string
+        """
+        api_key = api_key or self.default_api_key
+        # Prefer passed in stripe_account if set.
+        if not stripe_account:
+            stripe_account = self._get_stripe_account_id(api_key)
+
+        instance = self.api_retrieve(api_key=api_key, stripe_account=stripe_account)
+        return instance.request("post", instance.instance_url(), params=kwargs)
+
+    def str_parts(self) -> List[str]:
         """
         Extend this to add information to the string representation of the object
-
-        :rtype: list of str
         """
         return ["id={id}".format(id=self.id)]
 
@@ -186,9 +251,21 @@ class StripeModel(models.Model):
         return data
 
     @classmethod
+    def _find_owner_account(cls, data):
+        api_key = getattr(data, "api_key", "")
+        if api_key:
+            from .account import Account
+
+            return Account.get_or_retrieve_for_api_key(api_key)
+
+    @classmethod
     def _stripe_object_to_record(
-        cls, data, current_ids=None, pending_relations=None, stripe_account=None
-    ):
+        cls,
+        data: dict,
+        current_ids=None,
+        pending_relations: list = None,
+        stripe_account: str = None,
+    ) -> dict:
         """
         This takes an object, as it is formatted in Stripe's current API for our object
         type. In return, it provides a dict. The dict can be used to create a record or
@@ -199,25 +276,19 @@ class StripeModel(models.Model):
         (so that an objects.create() call would not fail).
 
         :param data: the object, as sent by Stripe. Parsed from JSON, into a dict
-        :type data: dict
         :param current_ids: stripe ids of objects that are currently being processed
         :type current_ids: set
         :param pending_relations: list of tuples of relations to be attached post-save
-        :type pending_relations: list
         :param stripe_account: The optional connected account \
             for which this request is being made.
-        :type stripe_account: string
         :return: All the members from the input, translated, mutated, etc
-        :rtype: dict
         """
         manipulated_data = cls._manipulate_stripe_object_hook(data)
 
-        if "object" not in data:
-            raise ValueError("Stripe data has no `object` value. Aborting. %r" % (data))
-
         if not cls.is_valid_object(data):
             raise ValueError(
-                "Trying to fit a %r into %r. Aborting." % (data["object"], cls.__name__)
+                "Trying to fit a %r into %r. Aborting."
+                % (data.get("object", ""), cls.__name__)
             )
 
         result = {}
@@ -255,6 +326,12 @@ class StripeModel(models.Model):
                     field_data = ""
 
             result[field.name] = field_data
+
+        # For all objects other than the account object itself, get the API key
+        # attached to the request, and get the matching Account for that key.
+        owner_account = cls._find_owner_account(data)
+        if owner_account:
+            result["djstripe_owner_account"] = owner_account
 
         return result
 
@@ -350,9 +427,9 @@ class StripeModel(models.Model):
         """
         Returns whether the data is a valid object for the class
         """
-        return data["object"] == cls.stripe_class.OBJECT_NAME
+        return "object" in data and data["object"] == cls.stripe_class.OBJECT_NAME
 
-    def _attach_objects_hook(self, cls, data):
+    def _attach_objects_hook(self, cls, data, current_ids=None):
         """
         Gets called by this object's create and sync methods just before save.
         Use this to populate fields before the model is saved.
@@ -360,6 +437,8 @@ class StripeModel(models.Model):
         :param cls: The target class for the instantiated object.
         :param data: The data dictionary received from the Stripe API.
         :type data: dict
+        :param current_ids: stripe ids of objects that are currently being processed
+        :type current_ids: set
         """
 
         pass
@@ -430,7 +509,7 @@ class StripeModel(models.Model):
                 stripe_account=stripe_account,
             )
         )
-        instance._attach_objects_hook(cls, data)
+        instance._attach_objects_hook(cls, data, current_ids=current_ids)
 
         if save:
             instance.save(force_insert=True)
@@ -441,6 +520,7 @@ class StripeModel(models.Model):
 
         return instance
 
+    # flake8: noqa (C901)
     @classmethod
     def _get_or_create_from_stripe_object(
         cls,
@@ -482,11 +562,10 @@ class StripeModel(models.Model):
             # no way of knowing what needs to be fetched!
             logger.warning(
                 "empty field %s.%s = %r - this is a bug, "
-                "please report it to dj-stripe! data = %r",
+                "please report it to dj-stripe!",
                 cls.__name__,
                 field_name,
                 field,
-                data,
             )
             return None, False
         elif id_ == field:
@@ -506,7 +585,19 @@ class StripeModel(models.Model):
                 # Leaving the default field_name ("id") will get_or_create the customer.
                 # If field_name="default_source", we get_or_create the card instead.
                 cls_instance = cls(id=id_)
-                data = cls_instance.api_retrieve(stripe_account=stripe_account)
+                try:
+                    data = cls_instance.api_retrieve(stripe_account=stripe_account)
+                except InvalidRequestError as e:
+                    # HACK around a Stripe bug.
+                    # When a FileUpload is retrieved from the Account object,
+                    # a mismatch between live and test mode is possible depending
+                    # on whether the file (usually the logo) was uploaded in live
+                    # or test. Reported to Stripe in August 2020.
+                    # Context: https://github.com/dj-stripe/dj-stripe/issues/830
+                    if "a similar object exists in" in str(e):
+                        pass
+                    else:
+                        raise
                 should_expand = False
 
         # The next thing to happen will be the "create from stripe object" call.
@@ -542,7 +633,7 @@ class StripeModel(models.Model):
             return cls.stripe_objects.get(id=id_), False
 
     @classmethod
-    def _stripe_object_to_customer(cls, target_cls, data):
+    def _stripe_object_to_customer(cls, target_cls, data, current_ids=None):
         """
         Search the given manager for the Customer matching this object's
         ``customer`` field.
@@ -550,10 +641,14 @@ class StripeModel(models.Model):
         :type target_cls: Customer
         :param data: stripe object
         :type data: dict
+        :param current_ids: stripe ids of objects that are currently being processed
+        :type current_ids: set
         """
 
         if "customer" in data and data["customer"]:
-            return target_cls._get_or_create_from_stripe_object(data, "customer")[0]
+            return target_cls._get_or_create_from_stripe_object(
+                data, "customer", current_ids=current_ids
+            )[0]
 
     @classmethod
     def _stripe_object_to_default_tax_rates(cls, target_cls, data):
@@ -617,9 +712,11 @@ class StripeModel(models.Model):
             )
             tax_amount, _ = target_cls.objects.update_or_create(
                 invoice=instance,
-                amount=tax_amount_data["amount"],
-                inclusive=tax_amount_data["inclusive"],
                 tax_rate=tax_rate,
+                defaults={
+                    "amount": tax_amount_data["amount"],
+                    "inclusive": tax_amount_data["inclusive"],
+                },
             )
 
             pks.append(tax_amount.pk)
@@ -649,7 +746,7 @@ class StripeModel(models.Model):
             return []
 
         invoiceitems = []
-        for line in lines.get("data", []):
+        for line in lines.auto_paging_iter():
             if invoice.id:
                 save = True
                 line.setdefault("invoice", invoice.id)
@@ -695,14 +792,18 @@ class StripeModel(models.Model):
 
         items = data.get("items")
         if not items:
+            subscription.items.delete()
             return []
 
+        pks = []
         subscriptionitems = []
-        for item_data in items.get("data", []):
+        for item_data in items.auto_paging_iter():
             item, _ = target_cls._get_or_create_from_stripe_object(
                 item_data, refetch=False
             )
+            pks.append(item.pk)
             subscriptionitems.append(item)
+        subscription.items.exclude(pk__in=pks).delete()
 
         return subscriptionitems
 
@@ -724,17 +825,13 @@ class StripeModel(models.Model):
             return []
 
         refund_objs = []
-        for refund_data in refunds.get("data", []):
+        for refund_data in refunds.auto_paging_iter():
             item, _ = target_cls._get_or_create_from_stripe_object(
                 refund_data, refetch=False
             )
             refund_objs.append(item)
 
         return refund_objs
-
-    def _sync(self, record_data):
-        for attr, value in record_data.items():
-            setattr(self, attr, value)
 
     @classmethod
     def sync_from_stripe_data(cls, data):
@@ -760,11 +857,28 @@ class StripeModel(models.Model):
         )
 
         if not created:
-            instance._sync(cls._stripe_object_to_record(data))
-            instance._attach_objects_hook(cls, data)
+            record_data = cls._stripe_object_to_record(data)
+            for attr, value in record_data.items():
+                setattr(instance, attr, value)
+            instance._attach_objects_hook(cls, data, current_ids=current_ids)
             instance.save()
             instance._attach_objects_post_save_hook(cls, data)
 
+        return instance
+
+    @classmethod
+    def _get_or_retrieve(cls, **kwargs):
+        try:
+            return cls.objects.get(**kwargs)
+        except cls.DoesNotExist:
+            pass
+
+        djstripe_owner_account = kwargs.pop("djstripe_owner_account", None)
+        if djstripe_owner_account:
+            kwargs["stripe_account"] = djstripe_owner_account.id
+
+        data = cls.stripe_class.retrieve(**kwargs)
+        instance = cls.sync_from_stripe_data(data)
         return instance
 
     def __str__(self):
@@ -788,8 +902,5 @@ class IdempotencyKey(models.Model):
         return str(self.uuid)
 
     @property
-    def is_expired(self):
-        """
-        :rtype: bool
-        """
+    def is_expired(self) -> bool:
         return timezone.now() > self.created + timedelta(hours=24)

@@ -2,6 +2,7 @@
 
 import django.core.validators
 import django.db.models.deletion
+from django.conf import settings
 from django.db import migrations, models
 
 import djstripe.enums
@@ -10,30 +11,73 @@ import djstripe.fields
 
 class Migration(migrations.Migration):
 
-    dependencies = [
-        ("djstripe", "0004_2_1"),
-    ]
+    dependencies = [("djstripe", "0001_initial")]
 
     operations = [
-        migrations.RemoveField(model_name="account", name="business_name",),
-        migrations.RemoveField(model_name="account", name="business_primary_color",),
-        migrations.RemoveField(model_name="account", name="business_url",),
-        migrations.RemoveField(model_name="account", name="debit_negative_balances",),
-        migrations.RemoveField(model_name="account", name="decline_charge_on",),
-        migrations.RemoveField(model_name="account", name="display_name",),
-        migrations.RemoveField(model_name="account", name="legal_entity",),
-        migrations.RemoveField(model_name="account", name="payout_schedule",),
         migrations.RemoveField(
-            model_name="account", name="payout_statement_descriptor",
+            model_name="account",
+            name="business_name",
         ),
-        migrations.RemoveField(model_name="account", name="statement_descriptor",),
-        migrations.RemoveField(model_name="account", name="support_email",),
-        migrations.RemoveField(model_name="account", name="support_phone",),
-        migrations.RemoveField(model_name="account", name="support_url",),
-        migrations.RemoveField(model_name="account", name="timezone",),
-        migrations.RemoveField(model_name="account", name="verification",),
+        migrations.RemoveField(
+            model_name="account",
+            name="business_primary_color",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="business_url",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="debit_negative_balances",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="decline_charge_on",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="display_name",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="legal_entity",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="payout_schedule",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="payout_statement_descriptor",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="statement_descriptor",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="support_email",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="support_phone",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="support_url",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="timezone",
+        ),
+        migrations.RemoveField(
+            model_name="account",
+            name="verification",
+        ),
         migrations.RenameField(
-            model_name="invoice", old_name="billing", new_name="collection_method",
+            model_name="invoice",
+            old_name="billing",
+            new_name="collection_method",
         ),
         migrations.AddField(
             model_name="invoice",
@@ -97,7 +141,7 @@ class Migration(migrations.Migration):
             name="customer_phone",
             field=models.TextField(
                 blank=True,
-                help_text="The customer’s phone number. Until the invoice is finalized, this field will equal customer.phone_. Once the invoice is finalized, this field will no longer be updated.",
+                help_text="The customer’s phone number. Until the invoice is finalized, this field will equal customer.phone. Once the invoice is finalized, this field will no longer be updated.",
                 max_length=5000,
             ),
         ),
@@ -123,13 +167,14 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="invoice",
             name="default_payment_method",
-            field=models.ForeignKey(
+            field=djstripe.fields.StripeForeignKey(
                 blank=True,
                 help_text="Default payment method for the invoice. It must belong to the customer associated with the invoice. If not set, defaults to the subscription’s default payment method, if any, or to the default payment method in the customer’s invoice settings.",
                 null=True,
                 on_delete=django.db.models.deletion.SET_NULL,
                 related_name="+",
                 to="djstripe.PaymentMethod",
+                to_field=settings.DJSTRIPE_FOREIGN_KEY_TO_FIELD,
             ),
         ),
         migrations.AddField(
@@ -345,7 +390,9 @@ class Migration(migrations.Migration):
                 max_length=9,
             ),
         ),
-        migrations.DeleteModel(name="UpcomingInvoice",),
+        migrations.DeleteModel(
+            name="UpcomingInvoice",
+        ),
         migrations.CreateModel(
             name="UpcomingInvoice",
             fields=[
@@ -357,8 +404,10 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "livemode",
-                    models.NullBooleanField(
+                    models.BooleanField(
+                        null=True,
                         default=None,
+                        blank=True,
                         help_text="Null here indicates that the livemode status is unknown or was previously unrecorded. Otherwise, this field indicates whether this record comes from Stripe test mode or live mode operation.",
                     ),
                 ),
@@ -454,8 +503,9 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "auto_advance",
-                    models.NullBooleanField(
-                        help_text="Controls whether Stripe will perform automatic collection of the invoice. When false, the invoice’s state will not automatically advance without an explicit action."
+                    models.BooleanField(
+                        null=True,
+                        help_text="Controls whether Stripe will perform automatic collection of the invoice. When false, the invoice’s state will not automatically advance without an explicit action.",
                     ),
                 ),
                 (
@@ -470,7 +520,8 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "closed",
-                    models.NullBooleanField(
+                    models.BooleanField(
+                        null=True,
                         default=False,
                         help_text="Whether or not the invoice is still trying to collect payment. An invoice is closed if it's either paid or it has been marked closed. A closed invoice will no longer attempt to collect payment.",
                     ),
@@ -518,7 +569,7 @@ class Migration(migrations.Migration):
                     "customer_phone",
                     models.TextField(
                         blank=True,
-                        help_text="The customer’s phone number. Until the invoice is finalized, this field will equal customer.phone_. Once the invoice is finalized, this field will no longer be updated.",
+                        help_text="The customer’s phone number. Until the invoice is finalized, this field will equal customer.phone. Once the invoice is finalized, this field will no longer be updated.",
                         max_length=5000,
                     ),
                 ),
@@ -564,7 +615,8 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "forgiven",
-                    models.NullBooleanField(
+                    models.BooleanField(
+                        null=True,
                         default=False,
                         help_text="Whether or not the invoice has been forgiven. Forgiving an invoice instructs us to update the subscription status as if the invoice were successfully paid. Once an invoice has been forgiven, it cannot be unforgiven or reopened.",
                     ),
@@ -608,7 +660,7 @@ class Migration(migrations.Migration):
                     "paid",
                     models.BooleanField(
                         default=False,
-                        help_text="The time at which payment will next be attempted.",
+                        help_text="Whether payment was successfully collected for this invoice. An invoice can be paid (most commonly) with a charge or with credit from the customer’s account balance.",
                     ),
                 ),
                 (
@@ -742,22 +794,24 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "customer",
-                    models.ForeignKey(
+                    djstripe.fields.StripeForeignKey(
                         help_text="The customer associated with this invoice.",
                         on_delete=django.db.models.deletion.CASCADE,
                         related_name="upcominginvoices",
                         to="djstripe.Customer",
+                        to_field=settings.DJSTRIPE_FOREIGN_KEY_TO_FIELD,
                     ),
                 ),
                 (
                     "default_payment_method",
-                    models.ForeignKey(
+                    djstripe.fields.StripeForeignKey(
                         blank=True,
                         help_text="Default payment method for the invoice. It must belong to the customer associated with the invoice. If not set, defaults to the subscription’s default payment method, if any, or to the default payment method in the customer’s invoice settings.",
                         null=True,
                         on_delete=django.db.models.deletion.SET_NULL,
                         related_name="+",
                         to="djstripe.PaymentMethod",
+                        to_field=settings.DJSTRIPE_FOREIGN_KEY_TO_FIELD,
                     ),
                 ),
                 (
@@ -771,16 +825,17 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "subscription",
-                    models.ForeignKey(
+                    djstripe.fields.StripeForeignKey(
                         help_text="The subscription that this invoice was prepared for, if any.",
                         null=True,
                         on_delete=django.db.models.deletion.SET_NULL,
                         related_name="upcominginvoices",
                         to="djstripe.Subscription",
+                        to_field=settings.DJSTRIPE_FOREIGN_KEY_TO_FIELD,
                     ),
                 ),
             ],
-            options={"ordering": ["-created"], "abstract": False,},
+            options={"ordering": ["-created"], "abstract": False},
         ),
         migrations.CreateModel(
             name="TaxRate",
@@ -794,8 +849,10 @@ class Migration(migrations.Migration):
                 ("id", djstripe.fields.StripeIdField(max_length=255, unique=True)),
                 (
                     "livemode",
-                    models.NullBooleanField(
+                    models.BooleanField(
+                        null=True,
                         default=None,
+                        blank=True,
                         help_text="Null here indicates that the livemode status is unknown or was previously unrecorded. Otherwise, this field indicates whether this record comes from Stripe test mode or live mode operation.",
                     ),
                 ),
@@ -867,7 +924,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
             ],
-            options={"get_latest_by": "created", "abstract": False,},
+            options={"get_latest_by": "created", "abstract": False},
         ),
         migrations.AddField(
             model_name="invoice",
@@ -947,14 +1004,15 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "tax_rate",
-                    models.ForeignKey(
+                    djstripe.fields.StripeForeignKey(
                         help_text="The tax rate that was applied to get this tax amount.",
                         on_delete=django.db.models.deletion.CASCADE,
                         to="djstripe.TaxRate",
+                        to_field=settings.DJSTRIPE_FOREIGN_KEY_TO_FIELD,
                     ),
                 ),
             ],
-            options={"unique_together": {("invoice", "tax_rate")},},
+            options={"unique_together": {("invoice", "tax_rate")}},
         ),
         migrations.CreateModel(
             name="DjstripeInvoiceTotalTaxAmount",
@@ -982,21 +1040,23 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "invoice",
-                    models.ForeignKey(
+                    djstripe.fields.StripeForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
                         related_name="total_tax_amounts",
                         to="djstripe.Invoice",
+                        to_field=settings.DJSTRIPE_FOREIGN_KEY_TO_FIELD,
                     ),
                 ),
                 (
                     "tax_rate",
-                    models.ForeignKey(
+                    djstripe.fields.StripeForeignKey(
                         help_text="The tax rate that was applied to get this tax amount.",
                         on_delete=django.db.models.deletion.CASCADE,
                         to="djstripe.TaxRate",
+                        to_field=settings.DJSTRIPE_FOREIGN_KEY_TO_FIELD,
                     ),
                 ),
             ],
-            options={"unique_together": {("invoice", "tax_rate")},},
+            options={"unique_together": {("invoice", "tax_rate")}},
         ),
     ]

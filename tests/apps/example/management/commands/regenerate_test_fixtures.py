@@ -4,12 +4,12 @@ from typing import Dict, List, Set, Type
 
 import stripe.api_resources
 import stripe.stripe_object
-import tests
 from django.core.management import BaseCommand
 from stripe.error import InvalidRequestError
 
 import djstripe.models
 import djstripe.settings
+import tests
 
 """
 Key used to store fake ids in the real stripe object's metadata dict
@@ -126,10 +126,16 @@ class Command(BaseCommand):
                 "id",
                 # not actually read-only
                 "billing_cycle_anchor",
-                # seem that this is replacing "billing"? (but they can't both be set)
-                "collection_method",
+                "billing",
                 "current_period_end",
                 "current_period_start",
+                # workaround for "the
+                # `invoice_customer_balance_settings[consume_applied_balance_on_void]`
+                # parameter is only supported in API version 2019-11-05 and below.
+                # See
+                # https://stripe.com/docs/api#versioning and
+                # https://stripe.com/docs/upgrades#2019-12-03 for more detail.
+                "invoice_customer_balance_settings",
                 "latest_invoice",
                 "start",
                 "start_date",
@@ -191,8 +197,9 @@ class Command(BaseCommand):
                 tests.FAKE_CARD_V,
             ],
             djstripe.models.Source: [tests.FAKE_SOURCE],
-            djstripe.models.Product: [tests.FAKE_PRODUCT],
             djstripe.models.Plan: [tests.FAKE_PLAN, tests.FAKE_PLAN_II],
+            djstripe.models.Price: [tests.FAKE_PRICE, tests.FAKE_PRICE_II],
+            djstripe.models.Product: [tests.FAKE_PRODUCT],
             djstripe.models.TaxRate: [
                 tests.FAKE_TAX_RATE_EXAMPLE_1_VAT,
                 tests.FAKE_TAX_RATE_EXAMPLE_2_SALES,
@@ -202,6 +209,9 @@ class Command(BaseCommand):
                 tests.FAKE_SUBSCRIPTION_II,
                 tests.FAKE_SUBSCRIPTION_III,
                 tests.FAKE_SUBSCRIPTION_MULTI_PLAN,
+            ],
+            djstripe.models.SubscriptionSchedule: [
+                tests.FAKE_SUBSCRIPTION_SCHEDULE,
             ],
             djstripe.models.Invoice: [tests.FAKE_INVOICE, tests.FAKE_INVOICE_IV],
             djstripe.models.Charge: [tests.FAKE_CHARGE],

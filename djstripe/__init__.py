@@ -4,7 +4,7 @@ dj-stripe - Django + Stripe Made Easy
 import pkg_resources
 from django.apps import AppConfig
 
-__version__ = pkg_resources.require("dj-stripe")[0].version
+__version__ = pkg_resources.get_distribution("dj-stripe").version
 
 default_app_config = "djstripe.DjstripeAppConfig"
 
@@ -19,6 +19,7 @@ class DjstripeAppConfig(AppConfig):
 
     def ready(self):
         import stripe
+
         from . import (  # noqa: Register the checks and event handlers
             checks,
             event_handlers,

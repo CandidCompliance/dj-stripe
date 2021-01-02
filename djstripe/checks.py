@@ -1,6 +1,7 @@
 """
 dj-stripe System Checks
 """
+import django
 from django.conf import settings
 from django.core import checks
 from django.utils.dateparse import date_re
@@ -76,6 +77,7 @@ def check_stripe_api_version(app_configs=None, **kwargs):
 def check_native_jsonfield_postgres_engine(app_configs=None, **kwargs):
     """
     Check that the DJSTRIPE_USE_NATIVE_JSONFIELD isn't set unless Postgres is in use.
+    Only used on Django < 3.1.
     """
     from . import settings as djstripe_settings
 
@@ -84,6 +86,12 @@ def check_native_jsonfield_postgres_engine(app_configs=None, **kwargs):
         "DJSTRIPE_USE_NATIVE_JSONFIELD is not compatible with engine {engine} "
         "for database {name}"
     )
+
+    # This error check is skipped on Django 3.1+, because the native JSONField
+    # will be used, which is compatible with mysql and sqlite.
+    # https://docs.djangoproject.com/en/dev/releases/3.1/#postgresql-jsonfield
+    if django.VERSION >= (3, 1):
+        return messages
 
     if djstripe_settings.USE_NATIVE_JSONFIELD:
         for db_name, db_config in settings.DATABASES.items():
@@ -103,6 +111,40 @@ def check_native_jsonfield_postgres_engine(app_configs=None, **kwargs):
                         id="djstripe.C005",
                     )
                 )
+
+    return messages
+
+
+@checks.register("djstripe")
+def check_native_jsonfield_set_on_recent_django_versions(app_configs=None, **kwargs):
+    """
+    Check that DJSTRIPE_USE_NATIVE_JSONFIELD is set on Django > 3.1.
+
+    This is only a suggestion, as existing installations need a migration path.
+    """
+
+    messages = []
+
+    # This error check is skipped on Django < 3.1+, because the native JSONField
+    # was not available outside of Postgres engines then.
+    if django.VERSION < (3, 1):
+        return messages
+
+    # NOTE: Not using app_settings.USE_NATIVE_JSONFIELD.
+    # Only display this warning if the setting is unset.
+    if not hasattr(settings, "DJSTRIPE_USE_NATIVE_JSONFIELD"):
+        # TODO: Give more details on the migration path
+        messages.append(
+            checks.Warning(
+                "DJSTRIPE_USE_NATIVE_JSONFIELD is not set.",
+                hint=(
+                    "On Django 3.1+, setting DJSTRIPE_USE_NATIVE_JSONFIELD = True is "
+                    "recommended.\nPre-existing dj-stripe installations may require a "
+                    "migration, in which case you may want to set it to False."
+                ),
+                id="djstripe.W005",
+            )
+        )
 
     return messages
 
@@ -218,6 +260,41 @@ def check_subscriber_key_length(app_configs=None, **kwargs):
                 "40 characters long",
                 hint="Current value: %r (%i characters)" % (key, key_size),
                 id="djstripe.E001",
+            )
+        )
+
+    return messages
+
+
+@checks.register("djstripe")
+def check_djstripe_settings_foreign_key_to_field(app_configs=None, **kwargs):
+    """
+    Check that DJSTRIPE_FOREIGN_KEY_TO_FIELD is set to a valid value.
+    """
+    from django.conf import settings
+
+    setting_name = "DJSTRIPE_FOREIGN_KEY_TO_FIELD"
+    hint = (
+        f'Set {setting_name} to "id" if this is a new installation, '
+        f'otherwise set it to "djstripe_id".'
+    )
+    messages = []
+
+    if not hasattr(settings, setting_name):
+        messages.append(
+            checks.Error(
+                "%s is not set." % (setting_name),
+                hint=hint,
+                id="djstripe.E002",
+            )
+        )
+    elif getattr(settings, setting_name) not in ("id", "djstripe_id"):
+        messages.append(
+            checks.Error(
+                "%r is not a valid value for %s."
+                % (getattr(settings, setting_name), setting_name),
+                hint=hint,
+                id="djstripe.E003",
             )
         )
 

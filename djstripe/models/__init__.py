@@ -1,3 +1,5 @@
+from .account import Account
+from .api import APIKey
 from .base import IdempotencyKey, StripeModel
 from .billing import (
     Coupon,
@@ -6,13 +8,14 @@ from .billing import (
     Plan,
     Subscription,
     SubscriptionItem,
+    SubscriptionSchedule,
+    TaxId,
     TaxRate,
     UpcomingInvoice,
     UsageRecord,
 )
 from .checkout import Session
 from .connect import (
-    Account,
     ApplicationFee,
     ApplicationFeeRefund,
     CountrySpec,
@@ -28,6 +31,7 @@ from .core import (
     FileUpload,
     PaymentIntent,
     Payout,
+    Price,
     Product,
     Refund,
     SetupIntent,
@@ -44,6 +48,7 @@ from .webhooks import WebhookEventTrigger
 
 __all__ = [
     "Account",
+    "APIKey",
     "ApplicationFee",
     "ApplicationFeeRefund",
     "BalanceTransaction",
@@ -64,6 +69,7 @@ __all__ = [
     "PaymentMethod",
     "Payout",
     "Plan",
+    "Price",
     "Product",
     "Refund",
     "SetupIntent",
@@ -73,6 +79,8 @@ __all__ = [
     "StripeModel",
     "Subscription",
     "SubscriptionItem",
+    "SubscriptionSchedule",
+    "TaxId",
     "TaxRate",
     "Transfer",
     "TransferReversal",

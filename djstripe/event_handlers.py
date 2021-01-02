@@ -123,6 +123,16 @@ def customer_subscription_webhook_handler(event):
     )
 
 
+@webhooks.handler("customer.tax_id")
+def customer_tax_id_webhook_handler(event):
+    """
+    Handle updates to customer tax ID objects.
+    """
+    _handle_crud_like_event(
+        target_cls=models.TaxId, event=event, crud_type=CrudType.determine(event=event)
+    )
+
+
 @webhooks.handler("payment_method")
 def payment_method_handler(event):
     """
@@ -159,8 +169,10 @@ def payment_method_handler(event):
     "invoiceitem",
     "payment_intent",
     "plan",
+    "price",
     "product",
     "setup_intent",
+    "subscription_schedule",
     "source",
     "tax_rate",
     "transfer",
@@ -168,7 +180,8 @@ def payment_method_handler(event):
 def other_object_webhook_handler(event):
     """
     Handle updates to charge, coupon, invoice, invoiceitem, payment_intent,
-    plan, product, setup_intent, source, tax_rate and transfer objects.
+    plan, product, setup_intent, subscription_schedule, source, tax_rate
+    and transfer objects.
 
     Docs for:
     - charge: https://stripe.com/docs/api/charges
@@ -177,8 +190,10 @@ def other_object_webhook_handler(event):
     - invoiceitem: https://stripe.com/docs/api/invoiceitems
     - payment_intent: https://stripe.com/docs/api/payment_intents
     - plan: https://stripe.com/docs/api/plans
+    - price: https://stripe.com/docs/api/prices
     - product: https://stripe.com/docs/api/products
     - setup_intent: https://stripe.com/docs/api/setup_intents
+    - subscription_schedule: https://stripe.com/docs/api/subscription_schedules
     - source: https://stripe.com/docs/api/sources
     - tax_rate: https://stripe.com/docs/api/tax_rates/
     - transfer: https://stripe.com/docs/api/transfers
@@ -196,9 +211,11 @@ def other_object_webhook_handler(event):
             "invoiceitem": models.InvoiceItem,
             "payment_intent": models.PaymentIntent,
             "plan": models.Plan,
+            "price": models.Price,
             "product": models.Product,
             "transfer": models.Transfer,
             "setup_intent": models.SetupIntent,
+            "subscription_schedule": models.SubscriptionSchedule,
             "source": models.Source,
             "tax_rate": models.TaxRate,
         }.get(event.category)

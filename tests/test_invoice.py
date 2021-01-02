@@ -43,8 +43,11 @@ class InvoiceTest(AssertStripeFksMixin, TestCase):
         self.default_expected_blank_fks = {
             "djstripe.Account.branding_logo",
             "djstripe.Account.branding_icon",
+            "djstripe.Charge.application_fee",
             "djstripe.Charge.dispute",
             "djstripe.Charge.latest_upcominginvoice (related name)",
+            "djstripe.Charge.on_behalf_of",
+            "djstripe.Charge.source_transfer",
             "djstripe.Charge.transfer",
             "djstripe.Customer.coupon",
             "djstripe.Customer.default_payment_method",
@@ -56,6 +59,7 @@ class InvoiceTest(AssertStripeFksMixin, TestCase):
             "djstripe.Subscription.default_payment_method",
             "djstripe.Subscription.default_source",
             "djstripe.Subscription.pending_setup_intent",
+            "djstripe.Subscription.schedule",
         }
 
     @patch(
@@ -757,7 +761,9 @@ class InvoiceTest(AssertStripeFksMixin, TestCase):
         autospec=True,
     )
     @patch(
-        "stripe.Plan.retrieve", return_value=deepcopy(FAKE_PLAN), autospec=True,
+        "stripe.Plan.retrieve",
+        return_value=deepcopy(FAKE_PLAN),
+        autospec=True,
     )
     @patch("stripe.Subscription.retrieve", autospec=True)
     @patch("stripe.Charge.retrieve", return_value=deepcopy(FAKE_CHARGE), autospec=True)
@@ -852,7 +858,7 @@ class InvoiceTest(AssertStripeFksMixin, TestCase):
         # but this doesn't match what I'm seeing from Stripe
         # I'm not sure if it's possible to predict the whole item id now,
         # sli seems to not reference anything
-        item_id_prefix = "{invoice_id}-sli_".format(invoice_id=invoice.id)
+        item_id_prefix = "{invoice_id}-il_".format(invoice_id=invoice.id)
         self.assertTrue(items[0].id.startswith(item_id_prefix))
         self.assertEqual(items[0].subscription.id, FAKE_SUBSCRIPTION["id"])
 
@@ -1074,8 +1080,12 @@ class InvoiceTest(AssertStripeFksMixin, TestCase):
         autospec=True,
     )
     @patch("stripe.Charge.retrieve", return_value=deepcopy(FAKE_CHARGE), autospec=True)
+    @patch(
+        "stripe.Product.retrieve", return_value=deepcopy(FAKE_PRODUCT), autospec=True
+    )
     def test_invoice_without_plan(
         self,
+        product_retrieve_mock,
         charge_retrieve_mock,
         paymentmethod_card_retrieve_mock,
         payment_intent_retrieve_mock,
@@ -1099,7 +1109,9 @@ class InvoiceTest(AssertStripeFksMixin, TestCase):
         )
 
     @patch(
-        "stripe.Plan.retrieve", return_value=deepcopy(FAKE_PLAN), autospec=True,
+        "stripe.Plan.retrieve",
+        return_value=deepcopy(FAKE_PLAN),
+        autospec=True,
     )
     @patch(
         "stripe.Subscription.retrieve",
@@ -1126,6 +1138,9 @@ class InvoiceTest(AssertStripeFksMixin, TestCase):
         self.assertIsNone(invoice.id)
         self.assertIsNone(invoice.save())
         self.assertEqual(invoice.get_stripe_dashboard_url(), "")
+
+        invoice.id = "foo"
+        self.assertIsNone(invoice.id)
 
         subscription_retrieve_mock.assert_called_once_with(
             api_key=ANY, expand=ANY, id=FAKE_SUBSCRIPTION["id"], stripe_account=None

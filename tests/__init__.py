@@ -8,10 +8,12 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 
 import json
 import logging
+import os
 import sys
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
@@ -19,6 +21,7 @@ from django.utils import dateformat, timezone
 
 from djstripe.webhooks import TEST_EVENT_ID
 
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
 logger = logging.getLogger(__name__)
 
 FUTURE_DATE = datetime(2100, 4, 30, tzinfo=timezone.utc)
@@ -35,6 +38,23 @@ IS_STATICMETHOD_AUTOSPEC_SUPPORTED = sys.version_info >= (3, 7, 4)
 
 
 class AssertStripeFksMixin:
+    def _get_field_str(self, field) -> str:
+        if isinstance(field, models.OneToOneRel):
+            if field.parent_link:
+                return ""
+            else:
+                reverse_id_name = str(field.remote_field.foreign_related_fields[0])
+                return (
+                    reverse_id_name.replace("djstripe_id", field.name)
+                    + " (related name)"
+                )
+
+        elif isinstance(field, models.ForeignKey):
+            return str(field)
+
+        else:
+            return ""
+
     def assert_fks(self, obj, expected_blank_fks, processed_stripe_ids=None):
         """
         Recursively walk through fks on obj, asserting they're not-none
@@ -50,37 +70,27 @@ class AssertStripeFksMixin:
         processed_stripe_ids.add(obj.id)
 
         for field in obj._meta.get_fields():
-            if isinstance(field, (models.ForeignKey, models.OneToOneRel)):
-                if isinstance(field, models.OneToOneRel):
-                    if field.parent_link:
-                        # skip checking model inheritance links
-                        continue
+            field_str = self._get_field_str(field)
+            if not field_str or field_str.endswith(".djstripe_owner_account"):
+                continue
 
-                    # Check reverse OneToOneFields
-                    # Hack - there's probably a better way to generate this name?
-                    reverse_id_name = str(field.remote_field.foreign_related_fields[0])
-                    field_str = reverse_id_name.replace("djstripe_id", field.name)
-                    field_str += " (related name)"
-                else:
-                    field_str = str(field)
+            try:
+                field_value = getattr(obj, field.name)
+            except ObjectDoesNotExist:
+                field_value = None
 
-                try:
-                    field_value = getattr(obj, field.name)
-                except ObjectDoesNotExist:
-                    field_value = None
+            if field_str in expected_blank_fks:
+                self.assertIsNone(field_value, field_str)
+            else:
+                self.assertIsNotNone(field_value, field_str)
 
-                if field_str in expected_blank_fks:
-                    self.assertIsNone(field_value, field_str)
-                else:
-                    self.assertIsNotNone(field_value, field_str)
+                if field_value.id not in processed_stripe_ids:
+                    # recurse into the object if it's not already been checked
+                    self.assert_fks(
+                        field_value, expected_blank_fks, processed_stripe_ids
+                    )
 
-                    if field_value.id not in processed_stripe_ids:
-                        # recurse into the object if it's not already been checked
-                        self.assert_fks(
-                            field_value, expected_blank_fks, processed_stripe_ids
-                        )
-
-                    logger.warning("checked {}".format(field_str))
+                logger.warning("checked {}".format(field_str))
 
 
 def load_fixture(filename):
@@ -92,19 +102,117 @@ def datetime_to_unix(datetime_):
     return int(dateformat.format(datetime_, "U"))
 
 
+class StripeItem(dict):
+    """Flexible class built to mock any generic Stripe object.
+
+    Implements object access + deletion methods to match the behavior
+    of Stripe's library, which allows both object + dictionary access.
+
+    Has a delete method since (most) Stripe objects can be deleted.
+    """
+
+    def __getattr__(self, name):
+        """Give StripeItem normal object access to match Stripe behavior."""
+        if name in self:
+            return self[name]
+        else:
+            raise AttributeError("No such attribute: " + name)
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+    def __delattr__(self, name):
+        if name in self:
+            del self[name]
+        else:
+            raise AttributeError("No such attribute: " + name)
+
+    def delete(self) -> bool:
+        """Superficial mock that adds a deleted attribute."""
+        self.deleted = True
+
+        return self.deleted
+
+    @classmethod
+    def class_url(cls):
+        return "/v1/test-items/"
+
+    def instance_url(self):
+        """Superficial mock that emulates instance_url."""
+        id = self.get("id")
+        base = self.class_url()
+        return "%s/%s" % (base, id)
+
+    def request(self, method, url, params) -> dict:
+        """Superficial mock that emulates request method."""
+        assert method == "post"
+        for key, value in params.items():
+            self.__setattr__(key, value)
+        return self
+
+
 class StripeList(dict):
+    """Mock a generic Stripe Iterable.
+
+    It has the relevant attributes of a stripe iterable (has_more, data).
+
+    This mock is important so we can use stripe's `list` method in our testing.
+    StripeList.list() will return the StripeList.
+
+    Additionally, iterating over instances of MockStripeIterable will iterate over
+    the data attribute, just like Stripe iterables.
+
+    Attributes:
+        has_more: mock has_more flag. Default False.
+        **kwargs: all of the fields of the stripe object, generally as a dictionary.
+    """
+
     object = "list"
-    has_more = False
     url = "/v1/fakes"
+    has_more = False
 
-    def __init__(self, data):
-        self.data = data
+    def __getattr__(self, name):
+        """Give StripeItem normal object access to match Stripe behavior."""
+        if name in self:
+            return self[name]
+        else:
+            raise AttributeError("No such attribute: " + name)
 
-    def __getitem__(self, key):
-        return self.getattr(key)
+    def __setattr__(self, name, value):
+        self[name] = value
 
-    def auto_paging_iter(self):
-        return self.data
+    def __delattr__(self, name):
+        if name in self:
+            del self[name]
+        else:
+            raise AttributeError("No such attribute: " + name)
+
+    def __iter__(self) -> Any:
+        """Make StripeList an iterable, to match the Stripe iterable behavior."""
+        self.iter_copy = self.data.copy()
+        return self
+
+    def __next__(self) -> StripeItem:
+        """Define iteration for StripeList."""
+        if len(self.iter_copy) > 0:
+            return self.iter_copy.pop(0)
+        else:
+            raise StopIteration()
+
+    def list(self, **kwargs: Any) -> "StripeList":
+        """Add a list method to the StripeList which returns itself.
+
+        list() accepts arbitrary kwargs, be careful is you expect the
+        argument-accepting functionality of Stripe's list() method.
+        """
+        return self
+
+    def auto_paging_iter(self) -> "StripeList":
+        """Add an auto_paging_iter method to the StripeList which returns itself.
+
+        The StripeList is an iterable, so this mimics the real behavior.
+        """
+        return self
 
     @property
     def total_count(self):
@@ -115,7 +223,10 @@ def default_account():
     from djstripe.models import Account
 
     return Account.objects.create(
-        charges_enabled=True, details_submitted=True, payouts_enabled=True
+        id="acct_TESTXXXXX",
+        charges_enabled=True,
+        details_submitted=True,
+        payouts_enabled=True,
     )
 
 
@@ -390,6 +501,9 @@ FAKE_SOURCE_II = SourceDict(
 
 FAKE_PAYMENT_INTENT_I = load_fixture("payment_intent_pi_fakefakefakefakefake0001.json")
 
+FAKE_PAYMENT_INTENT_II = deepcopy(FAKE_PAYMENT_INTENT_I)
+FAKE_PAYMENT_INTENT_II["customer"] = "cus_4UbFSo9tl62jqj"  # FAKE_CUSTOMER_II
+
 
 class PaymentMethodDict(dict):
     def detach(self):
@@ -400,6 +514,9 @@ class PaymentMethodDict(dict):
 FAKE_PAYMENT_METHOD_I = PaymentMethodDict(
     load_fixture("payment_method_pm_fakefakefakefake0001.json")
 )
+
+FAKE_PAYMENT_METHOD_II = deepcopy(FAKE_PAYMENT_METHOD_I)
+FAKE_PAYMENT_METHOD_II["customer"] = "cus_4UbFSo9tl62jqj"  # FAKE_CUSTOMER_II
 
 # FAKE_CARD, but accessed as a PaymentMethod
 FAKE_CARD_AS_PAYMENT_METHOD = PaymentMethodDict(
@@ -453,7 +570,12 @@ FAKE_SESSION_I = {
 }
 
 
-class ChargeDict(dict):
+class ChargeDict(StripeItem):
+    def __init__(self, *args, **kwargs):
+        """Match Stripe's behavior: return a stripe iterable on `charge.refunds`."""
+        super().__init__(*args, **kwargs)
+        self.refunds = StripeList(self.refunds)
+
     def refund(self, amount=None, reason=None):
         self.update({"refunded": True, "amount_refunded": amount})
         return self
@@ -471,9 +593,25 @@ FAKE_CHARGE_II = ChargeDict(
         "id": "ch_16ag432eZvKYlo2CGDe6lvVs",
         "object": "charge",
         "amount": 3000,
+        "amount_captured": 0,
         "amount_refunded": 0,
         "application_fee": None,
+        "application_fee_amount": None,
         "balance_transaction": FAKE_BALANCE_TRANSACTION["id"],
+        "billing_details": {
+            "address": {
+                "city": None,
+                "country": "US",
+                "line1": None,
+                "line2": None,
+                "postal_code": "92082",
+                "state": None,
+            },
+            "email": "kyoung@hotmail.com",
+            "name": "John Foo",
+            "phone": None,
+        },
+        "calculated_statement_descriptor": "Stripe",
         "captured": False,
         "created": 1439788903,
         "currency": "usd",
@@ -481,23 +619,50 @@ FAKE_CHARGE_II = ChargeDict(
         "description": None,
         "destination": None,
         "dispute": None,
+        "disputed": False,
         "failure_code": "expired_card",
         "failure_message": "Your card has expired.",
         "fraud_details": {},
         "invoice": "in_16af5A2eZvKYlo2CJjANLL81",
         "livemode": False,
         "metadata": {},
+        "on_behalf_of": None,
         "order": None,
         "outcome": {
             "network_status": "declined_by_network",
             "reason": "expired_card",
             "risk_level": "normal",
+            "risk_score": 1,
             "seller_message": "The bank returned the decline code `expired_card`.",
             "type": "issuer_declined",
         },
         "paid": False,
+        "payment_intent": FAKE_PAYMENT_INTENT_II["id"],
+        "payment_method": FAKE_CARD_AS_PAYMENT_METHOD["id"],
+        "payment_method_details": {
+            "card": {
+                "brand": "visa",
+                "checks": {
+                    "address_line1_check": None,
+                    "address_postal_code_check": None,
+                    "cvc_check": None,
+                },
+                "country": "US",
+                "exp_month": 6,
+                "exp_year": 2021,
+                "fingerprint": "88PuXw9tEmvYe69o",
+                "funding": "credit",
+                "installments": None,
+                "last4": "4242",
+                "network": "visa",
+                "three_d_secure": None,
+                "wallet": None,
+            },
+            "type": "card",
+        },
         "receipt_email": None,
         "receipt_number": None,
+        "receipt_url": None,
         "refunded": False,
         "refunds": {
             "object": "list",
@@ -506,11 +671,15 @@ FAKE_CHARGE_II = ChargeDict(
             "url": "/v1/charges/ch_16ag432eZvKYlo2CGDe6lvVs/refunds",
             "data": [],
         },
+        "review": None,
         "shipping": None,
         "source": deepcopy(FAKE_CARD_II),
         "source_transfer": None,
         "statement_descriptor": None,
+        "statement_descriptor_suffix": None,
         "status": "failed",
+        "transfer_data": None,
+        "transfer_group": None,
     }
 )
 
@@ -684,13 +853,124 @@ FAKE_PLAN_METERED = {
 }
 
 
-class SubscriptionDict(dict):
+FAKE_PRICE = load_fixture("price_gold21323.json")
+FAKE_PRICE_II = load_fixture("price_silver41294.json")
+
+for price in (FAKE_PRICE, FAKE_PRICE_II):
+    # sanity check
+    assert price["product"] == FAKE_PRODUCT["id"]
+
+
+FAKE_PRICE_TIER = {
+    "active": True,
+    "billing_scheme": "tiered",
+    "created": 1386247539,
+    "currency": "usd",
+    "id": "price_tier21323",
+    "livemode": False,
+    "lookup_key": None,
+    "metadata": {},
+    "nickname": "New price name",
+    "object": "price",
+    "product": FAKE_PRODUCT["id"],
+    "recurring": {
+        "aggregate_usage": None,
+        "interval": "month",
+        "interval_count": 1,
+        "trial_period_days": None,
+        "usage_type": "licensed",
+    },
+    "tiers": [
+        {
+            "flat_amount": 4900,
+            "flat_amount_decimal": "4900",
+            "unit_amount": 1000,
+            "unit_amount_decimal": "1000",
+            "up_to": 5,
+        },
+        {
+            "flat_amount": None,
+            "flat_amount_decimal": None,
+            "unit_amount": 900,
+            "unit_amount_decimal": "900",
+            "up_to": None,
+        },
+    ],
+    "tiers_mode": "graduated",
+    "transform_quantity": None,
+    "type": "recurring",
+    "unit_amount": None,
+    "unit_amount_decimal": None,
+}
+
+FAKE_PRICE_METERED = {
+    "active": True,
+    "billing_scheme": "per_unit",
+    "created": 1552632817,
+    "currency": "usd",
+    "id": "price_fakemetered",
+    "livemode": False,
+    "lookup_key": None,
+    "metadata": {},
+    "nickname": "Sum Metered Price",
+    "object": "price",
+    "product": FAKE_PRODUCT["id"],
+    "recurring": {
+        "aggregate_usage": "sum",
+        "interval": "month",
+        "interval_count": 1,
+        "trial_period_days": None,
+        "usage_type": "metered",
+    },
+    "tiers_mode": None,
+    "transform_quantity": None,
+    "type": "recurring",
+    "unit_amount": 200,
+    "unit_amount_decimal": "200",
+}
+
+FAKE_PRICE_ONETIME = {
+    "active": True,
+    "billing_scheme": "per_unit",
+    "created": 1552632818,
+    "currency": "usd",
+    "id": "price_fakeonetime",
+    "livemode": False,
+    "lookup_key": None,
+    "metadata": {},
+    "nickname": "One-Time Price",
+    "object": "price",
+    "product": FAKE_PRODUCT["id"],
+    "recurring": None,
+    "tiers_mode": None,
+    "transform_quantity": None,
+    "type": "one_time",
+    "unit_amount": 2000,
+    "unit_amount_decimal": "2000",
+}
+
+
+class SubscriptionDict(StripeItem):
+    def __init__(self, *args, **kwargs):
+        """Match Stripe's behavior: return a stripe iterable on `subscription.items`."""
+        super().__init__(*args, **kwargs)
+        self["items"] = StripeList(self["items"])
+
     def __setattr__(self, name, value):
         if type(value) == datetime:
             value = datetime_to_unix(value)
 
-        # Special case for plan
-        if name == "plan":
+        # Special case for price and plan
+        if name == "price":
+            for price in [
+                FAKE_PRICE,
+                FAKE_PRICE_II,
+                FAKE_PRICE_TIER,
+                FAKE_PRICE_METERED,
+            ]:
+                if value == price["id"]:
+                    value = price
+        elif name == "plan":
             for plan in [FAKE_PLAN, FAKE_PLAN_II, FAKE_TIER_PLAN, FAKE_PLAN_METERED]:
                 if value == plan["id"]:
                     value = plan
@@ -775,6 +1055,62 @@ FAKE_SUBSCRIPTION_METERED = SubscriptionDict(
         "trial_start": None,
     }
 )
+
+FAKE_SUBSCRIPTION_SCHEDULE = {
+    "id": "sub_sched_1Hm7q6Fz0jfFqjGs2OxOSCzD",
+    "object": "subscription_schedule",
+    "canceled_at": None,
+    "completed_at": None,
+    "created": 1605056974,
+    "current_phase": None,
+    "customer": "cus_4UbFSo9tl62jqj",  # FAKE_CUSTOMER_II
+    "default_settings": {
+        "billing_cycle_anchor": "automatic",
+        "billing_thresholds": None,
+        "collection_method": "charge_automatically",
+        "default_payment_method": None,
+        "default_source": None,
+        "invoice_settings": None,
+        "transfer_data": None,
+    },
+    "end_behavior": "release",
+    "livemode": False,
+    "metadata": {},
+    "phases": [
+        {
+            "add_invoice_items": [],
+            "application_fee_percent": None,
+            "billing_cycle_anchor": None,
+            "billing_thresholds": None,
+            "collection_method": None,
+            "coupon": None,
+            "default_payment_method": None,
+            "default_tax_rates": [],
+            "end_date": 1637195591,
+            "invoice_settings": None,
+            "plans": [
+                {
+                    "billing_thresholds": None,
+                    "plan": FAKE_PLAN_II["id"],
+                    "price": FAKE_PRICE_II["id"],
+                    "quantity": None,
+                    "tax_rates": [],
+                }
+            ],
+            "prorate": True,
+            "proration_behavior": "create_prorations",
+            "start_date": 1605659591,
+            "tax_percent": None,
+            "transfer_data": None,
+            "trial_end": None,
+        }
+    ],
+    "released_at": None,
+    "released_subscription": None,
+    "renewal_interval": None,
+    "status": "not_started",
+    "subscription": None,
+}
 
 
 class Sources(object):
@@ -864,7 +1200,12 @@ FAKE_DISCOUNT_CUSTOMER = {
 }
 
 
-class InvoiceDict(dict):
+class InvoiceDict(StripeItem):
+    def __init__(self, *args, **kwargs):
+        """Match Stripe's behavior: return a stripe iterable on `invoice.lines`."""
+        super().__init__(*args, **kwargs)
+        self.lines = StripeList(self.lines)
+
     def pay(self):
         return self
 
@@ -1103,14 +1444,20 @@ FAKE_INVOICEITEM = {
     "date": 1439033216,
     "description": "One-time setup fee",
     "discountable": True,
+    "discounts": [],
     "invoice": FAKE_INVOICE_II["id"],
     "livemode": False,
     "metadata": {"key1": "value1", "key2": "value2"},
     "period": {"start": 1439033216, "end": 1439033216},
     "plan": None,
+    "price": None,
     "proration": False,
     "quantity": None,
     "subscription": None,
+    "subscription_item": None,
+    "tax_rates": [],
+    "unit_amount": 2000,
+    "unit_amount_decimal": "2000",
 }
 
 FAKE_INVOICEITEM_II = {
@@ -1122,14 +1469,20 @@ FAKE_INVOICEITEM_II = {
     "date": 1439033216,
     "description": "One-time setup fee",
     "discountable": True,
+    "discounts": [],
     "invoice": FAKE_INVOICE["id"],
     "livemode": False,
     "metadata": {"key1": "value1", "key2": "value2"},
     "period": {"start": 1439033216, "end": 1439033216},
     "plan": None,
+    "price": None,
     "proration": False,
     "quantity": None,
     "subscription": None,
+    "subscription_item": None,
+    "tax_rates": [],
+    "unit_amount": 2000,
+    "unit_amount_decimal": "2000",
 }
 
 # Invoice item with tax_rates
@@ -1143,15 +1496,20 @@ FAKE_INVOICEITEM_III = {
     "date": 1439033216,
     "description": "One-time setup fee",
     "discountable": True,
+    "discounts": [],
     "invoice": FAKE_INVOICE_II["id"],
     "livemode": False,
     "metadata": {"key1": "value1", "key2": "value2"},
     "period": {"start": 1439033216, "end": 1439033216},
     "plan": None,
+    "price": None,
     "proration": False,
     "quantity": None,
     "subscription": None,
+    "subscription_item": None,
     "tax_rates": [FAKE_TAX_RATE_EXAMPLE_1_VAT],
+    "unit_amount": 2000,
+    "unit_amount_decimal": "2000",
 }
 
 
@@ -1586,6 +1944,38 @@ FAKE_EVENT_PLAN_DELETED.update(
     {"id": "evt_1877X72eZvKYl2jkds32jJFc", "type": "plan.deleted"}
 )
 
+FAKE_EVENT_PRICE_CREATED = {
+    "id": "evt_1HlZWCFz0jfFqjGsXOiPW10r",
+    "object": "event",
+    "api_version": "2020-03-02",
+    "created": 1604925044,
+    "data": {"object": deepcopy(FAKE_PRICE)},
+    "livemode": False,
+    "pending_webhooks": 0,
+    "request": {"id": "req_Nq7dDuP0HRrqcP", "idempotency_key": None},
+    "type": "price.created",
+}
+
+FAKE_EVENT_PRICE_UPDATED = {
+    "id": "evt_1HlZbxFz0jfFqjGsZwiHHf7h",
+    "object": "event",
+    "api_version": "2020-03-02",
+    "created": 1604925401,
+    "data": {
+        "object": FAKE_PRICE,
+        "previous_attributes": {"unit_amount": 2000, "unit_amount_decimal": "2000"},
+    },
+    "livemode": False,
+    "pending_webhooks": 0,
+    "request": {"id": "req_78pnxbwPMvOIwe", "idempotency_key": None},
+    "type": "price.updated",
+}
+
+FAKE_EVENT_PRICE_DELETED = deepcopy(FAKE_EVENT_PRICE_CREATED)
+FAKE_EVENT_PRICE_DELETED.update(
+    {"id": "evt_1HlZelFz0jfFqjGs0F4BML2l", "type": "price.deleted"}
+)
+
 FAKE_EVENT_TRANSFER_CREATED = {
     "id": "evt_16igNU2eZvKYlo2CYyMkYvet",
     "object": "event",
@@ -1765,4 +2155,51 @@ FAKE_EVENT_PAYMENT_INTENT_SUCCEEDED_DESTINATION_CHARGE = {
     "pending_webhooks": 1,
     "request": {"id": "req_AJAmnJE4eiPIzb", "idempotency_key": None},
     "type": "payment_intent.succeeded",
+}
+
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CREATED = {
+    "id": "evt_1Hm7q6Fz0jfFqjGsJSG4N91w",
+    "object": "event",
+    "api_version": "2020-03-02",
+    "created": 1605056974,
+    "data": {"object": deepcopy(FAKE_SUBSCRIPTION_SCHEDULE)},
+    "livemode": False,
+    "pending_webhooks": 0,
+    "request": {
+        "id": "req_Pttj3aW5RJwees",
+        "idempotency_key": "d2a77191-cc07-4c60-abab-5fb11357bd63",
+    },
+    "type": "subscription_schedule.created",
+}
+
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_UPDATED = deepcopy(
+    FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CREATED
+)
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_UPDATED["id"] = "sub_sched_1Hm86MFz0jfFqjGsc5iEdZee"
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_UPDATED["type"] = "subscription_schedule.updated"
+# FAKE_EVENT_SUBSCRIPTION_SCHEDULE_UPDATED["data"]["object"]["released_at"] = 1605058030
+# FAKE_EVENT_SUBSCRIPTION_SCHEDULE_UPDATED["data"]["object"]["status"] = "released"
+# FAKE_EVENT_SUBSCRIPTION_SCHEDULE_UPDATED["data"]["previous_attributes"] = {
+#     "released_at": None,
+#     "status": "not_started",
+# }
+
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_RELEASED = deepcopy(
+    FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CREATED
+)
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_RELEASED["id"] = "evt_1Hm878Fz0jfFqjGsClU9gE79"
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_RELEASED["type"] = "subscription_schedule.released"
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_RELEASED["data"]["object"]["released_at"] = 1605058030
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_RELEASED["data"]["object"]["status"] = "released"
+
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CANCELED = deepcopy(
+    FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CREATED
+)
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CANCELED["id"] = "evt_1Hm80YFz0jfFqjGs7kKvT7RE"
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CANCELED["type"] = "subscription_schedule.canceled"
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CANCELED["data"]["object"]["canceled_at"] = 1605057622
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CANCELED["data"]["object"]["status"] = "canceled"
+FAKE_EVENT_SUBSCRIPTION_SCHEDULE_CANCELED["data"]["previous_attributes"] = {
+    "released_at": None,
+    "status": "not_started",
 }
